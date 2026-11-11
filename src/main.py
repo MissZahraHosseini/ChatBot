@@ -2,12 +2,14 @@
 from anthropic import Anthropic
 from anthropic.types import Message
 
+from src.retriever import build_retriever
+
 from src.config import (
     API_KEY,
     BASE_URL,
     MODEL,
     MAX_TOKENS,
-    TEMPERATURE
+   
 )
 
 from src.prompts import SYSTEM_PROMPT
@@ -26,14 +28,13 @@ def add_user_message(messages, message):
 
     Args:
         messages (list): Conversation history.
-        message (str or Message): User message to append.
+        message (str): User message to append.
     """
-    user_message = {
-        "role": "user",
-        "content": message.content if isinstance(message, Message) else message,
-    }
 
-    messages.append(user_message)
+    messages.append({
+        "role": "user",
+        "content": message
+    })
 
 
 def add_assistant_message(messages, message):
@@ -42,14 +43,70 @@ def add_assistant_message(messages, message):
 
     Args:
         messages (list): Conversation history.
-        message (str or Message): Assistant response to append.
+        message (str): Assistant response to append.
     """
-    assistant_message = {
-        "role": "assistant",
-        "content": message.content if isinstance(message, Message) else message,
-    }
 
-    messages.append(assistant_message)
+    messages.append({
+        "role": "assistant",
+        "content": message
+    })
+
+
+def retrieve_context(retriever, query, k=3):
+    """
+    Retrieve relevant document chunks using the hybrid retriever.
+
+    Args:
+        retriever: Initialized hybrid retriever.
+        query (str): User question.
+        k (int): Number of relevant chunks to retrieve.
+
+    Returns:
+        str: Combined retrieved document context.
+    """
+
+    results = retriever.search(query, k=k)
+
+    context_parts = []
+
+    for document, score in results:
+
+        content = document.get("content", "")
+
+        if content:
+            context_parts.append(content)
+
+    return "\n\n".join(context_parts)
+
+
+def build_user_prompt(question, context):
+    """
+    Combine the retrieved document context with the user question.
+
+    Args:
+        question (str): Original user question.
+        context (str): Retrieved document context.
+
+    Returns:
+        str: Augmented user prompt.
+    """
+
+    if not context:
+        context = "No relevant document context was retrieved."
+
+    return f"""
+Document Context:
+
+<context>
+{context}
+</context>
+
+User Question:
+
+{question}
+
+Answer the user's question in Persian according to the system instructions.
+"""
 
 
 def chat(
@@ -81,6 +138,7 @@ def chat(
         "messages": messages,
     }
 
+
     if stop_sequences:
         params["stop_sequences"] = stop_sequences
 
@@ -111,6 +169,7 @@ def text_from_message(message):
     Returns:
         str: Extracted text content.
     """
+
     return "\n".join(
         block.text
         for block in message.content
@@ -118,36 +177,80 @@ def text_from_message(message):
     )
 
 
-
 def main():
+
     messages = []
 
     print("دستیار هوشمند اسناد حقوقی فعال شد.")
     print("برای پایان مکالمه، عبارت «خروج» را وارد کنید.\n")
 
-    while True:
-        user_input = input("کاربر: ")
+    # Initialize the hybrid retriever only once.
+    print("Initializing Hybrid Retriever...")
 
-        if user_input.strip().lower() in ["exit", "خروج"]:
+    retriever = build_retriever()
+
+    print("Hybrid Retriever initialized successfully.\n")
+
+    while True:
+
+        user_input = input("کاربر: ").strip()
+
+        if user_input.lower() in ["exit", "خروج"]:
             print("دستیار: مکالمه پایان یافت.")
             break
 
-        add_user_message(messages, user_input)
+        if not user_input:
+            continue
 
         try:
+
+            # Retrieve relevant document chunks.
+            context = retrieve_context(
+                retriever=retriever,
+                query=user_input,
+                k=3
+            )
+
+            # Build the augmented user prompt.
+            augmented_prompt = build_user_prompt(
+                question=user_input,
+                context=context
+            )
+
+            # Store the original user question.
+            add_user_message(messages, user_input)
+
+            # Create request history with retrieved context.
+            request_messages = messages[:-1] + [
+                {
+                    "role": "user",
+                    "content": augmented_prompt
+                }
+            ]
+
+            # Send the request to Claude.
             response = chat(
-                messages=messages,
+                messages=request_messages,
                 system=SYSTEM_PROMPT
             )
 
+            # Extract the assistant response.
             assistant_response = text_from_message(response)
 
+            # Display the response.
             print(f"\nدستیار: {assistant_response}\n")
 
-            add_assistant_message(messages, assistant_response)
+            # Store the assistant response in conversation history.
+            add_assistant_message(
+                messages,
+                assistant_response
+            )
 
         except Exception as error:
-            messages.pop()
+
+            if messages and messages[-1]["role"] == "user":
+                messages.pop()
+
             print(f"خطا در پردازش درخواست: {error}")
 
 
