@@ -1,6 +1,5 @@
 
 from anthropic import Anthropic
-from anthropic.types import Message
 
 from src.retriever import build_retriever
 
@@ -183,13 +182,9 @@ def main():
 
     print("دستیار هوشمند اسناد حقوقی فعال شد.")
     print("برای پایان مکالمه، عبارت «خروج» را وارد کنید.\n")
-
-    # Initialize the hybrid retriever only once.
-    print("Initializing Hybrid Retriever...")
-
+    
+    # Initialize the hybrid retriever using BM25 and vector search
     retriever = build_retriever()
-
-    print("Hybrid Retriever initialized successfully.\n")
 
     while True:
 
